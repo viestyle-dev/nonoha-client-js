@@ -1,0 +1,33 @@
+{
+  "name": "nonoha-client-js",
+  "version": "1.0.0",
+  "description": "TypeScript client for nonoha-engine (pure JavaScript, no React dependencies)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/viestyle-dev/nonoha-client-js.git"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:esm": "tsc",
+    "build:iife": "esbuild src/index.ts --bundle --format=iife --global-name=NonohaClient --outfile=dist/nonoha-client.iife.js --target=es2020",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.0.0",
+    "vitest": "2.1.9"
+  }
+}
