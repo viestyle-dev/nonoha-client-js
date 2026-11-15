@@ -194,7 +194,8 @@ interface EngineWatch {
   key: string
   ref: InspectorPortRef
   options: WatchOptions
-  subscribers: Set<Subscriber>
+  /** Replaced (not mutated) on change: samples iterate it by index. */
+  subscribers: Subscriber[]
   intervalMs: number
   info: WatchInfo | null
   /** Reused for every sample of this watch. */
@@ -306,7 +307,7 @@ export class InspectorClient {
       this.backoffMs = 500
       this.sendJson({ op: 'hello', protocol: INSPECTOR_PROTOCOL, client: this.options.clientName })
       this.sendActivity()
-      for (const watch of this.watchesById.values()) this.sendWatch(watch)
+      this.watchesById.forEach(watch => this.sendWatch(watch))
       if (this.hidden) this.sendJson({ op: 'pause' })
     }
     socket.onmessage = (event: MessageEvent) => {
@@ -370,7 +371,7 @@ export class InspectorClient {
         key,
         ref: { node: ref.node, dir: ref.dir, port: ref.port },
         options: { ...options },
-        subscribers: new Set(),
+        subscribers: [],
         intervalMs: Infinity,
         info: null,
         sample: { watchId: id, frameSeq: 0, sampleSeq: 0, dispatchCount: 0, t: 0, flags: 0, steps: NO_STEPS, values: null },
@@ -380,8 +381,8 @@ export class InspectorClient {
       this.watchesById.set(id, watch)
     }
     const subscriber: Subscriber = { intervalMs: options.intervalMs ?? DEFAULT_INTERVAL_MS, callbacks }
-    watch.subscribers.add(subscriber)
-    if (!this.updateInterval(watch) && watch.subscribers.size > 1) {
+    watch.subscribers = watch.subscribers.concat(subscriber)
+    if (!this.updateInterval(watch) && watch.subscribers.length > 1) {
       // Joined a running watch: ask for the current value instead of waiting.
       this.sendJson({ op: 'snapshot', id: watch.id })
     }
@@ -396,8 +397,10 @@ export class InspectorClient {
       },
       snapshot: () => this.sendJson({ op: 'snapshot', id: engineWatch.id }),
       unwatch: () => {
-        if (!engineWatch.subscribers.delete(subscriber)) return
-        if (engineWatch.subscribers.size === 0) {
+        const remaining = engineWatch.subscribers.filter(s => s !== subscriber)
+        if (remaining.length === engineWatch.subscribers.length) return
+        engineWatch.subscribers = remaining
+        if (remaining.length === 0) {
           this.watchesByKey.delete(engineWatch.key)
           this.watchesById.delete(engineWatch.id)
           this.sendJson({ op: 'unwatch', id: engineWatch.id })
@@ -411,7 +414,8 @@ export class InspectorClient {
   /** Send the watch when its shortest interval changed; returns whether it was sent. */
   private updateInterval(watch: EngineWatch): boolean {
     let min = Infinity
-    for (const s of watch.subscribers) if (s.intervalMs < min) min = s.intervalMs
+    const subscribers = watch.subscribers
+    for (let i = 0; i < subscribers.length; ++i) if (subscribers[i].intervalMs < min) min = subscribers[i].intervalMs
     if (min === watch.intervalMs) return false
     watch.intervalMs = min
     this.sendWatch(watch)
@@ -456,12 +460,12 @@ export class InspectorClient {
         this.activityById.set(id, port)
       }
     }
-    for (const [key, port] of this.activityPorts) {
+    this.activityPorts.forEach((port, key) => {
       if (!keep.has(key)) {
         this.activityPorts.delete(key)
         this.activityById.delete(port.id)
       }
-    }
+    })
     this.activityIntervalMs = intervalMs
     this.sendActivity()
   }
@@ -487,10 +491,10 @@ export class InspectorClient {
   }
 
   private sendActivity(): void {
-    const ports = []
-    for (const { id, entry } of this.activityPorts.values()) {
+    const ports: { id: number; node: string; dir: PortDirection; port: string }[] = []
+    this.activityPorts.forEach(({ id, entry }) => {
       ports.push({ id, node: entry.ref.node, dir: entry.ref.dir, port: entry.ref.port })
-    }
+    })
     this.sendJson({ op: 'activity', interval_ms: this.activityIntervalMs, ports })
   }
 
@@ -503,7 +507,7 @@ export class InspectorClient {
 
   private setStatus(status: InspectorStatus): void {
     this._status = status
-    for (const listener of this.statusListeners) listener(status)
+    this.statusListeners.forEach(listener => listener(status))
   }
 
   private handleText(text: string): void {
@@ -521,12 +525,13 @@ export class InspectorClient {
         const watch = this.watchesById.get(message.id)
         if (!watch) break
         watch.info = { types: message.types ?? [], shape: message.shape ?? null }
-        for (const s of watch.subscribers) s.callbacks.onInfo?.(watch.info)
+        const info = watch.info
+        watch.subscribers.forEach(s => s.callbacks.onInfo?.(info))
         break
       }
       case 'gone': {
         const watch = this.watchesById.get(message.id)
-        if (watch) for (const s of watch.subscribers) s.callbacks.onGone?.()
+        if (watch) watch.subscribers.forEach(s => s.callbacks.onGone?.())
         break
       }
       case 'status':
@@ -548,11 +553,12 @@ export class InspectorClient {
         this._hello = { protocol: message.protocol, limits: message.limits ?? {}, plugins: message.plugins ?? [] }
         this.engineStatus = { state: 'ok', reasons: [] }
         this.setStatus(this.hidden ? { state: 'hidden', reasons: [] } : this.engineStatus)
-        for (const listener of this.helloListeners) listener(this._hello)
+        const hello = this._hello
+        this.helloListeners.forEach(listener => listener(hello))
         break
       case 'error': {
         const watch = message.id != null ? this.watchesById.get(message.id) : undefined
-        if (watch) for (const s of watch.subscribers) s.callbacks.onError?.(message.code, message.message)
+        if (watch) watch.subscribers.forEach(s => s.callbacks.onError?.(message.code, message.message))
         break
       }
     }
@@ -576,7 +582,7 @@ export class InspectorClient {
       changed.push(entry)
     }
     if (changed.length === 0) return
-    for (const listener of this.activityListeners) listener(changed)
+    this.activityListeners.forEach(listener => listener(changed))
   }
 
   private handleSample(buffer: ArrayBuffer): void {
@@ -620,6 +626,7 @@ export class InspectorClient {
       watch.previous = values
       sample.values = values
     }
-    for (const s of watch.subscribers) s.callbacks.onSample(sample)
+    const subscribers = watch.subscribers
+    for (let i = 0; i < subscribers.length; ++i) subscribers[i].callbacks.onSample(sample)
   }
 }
