@@ -55,6 +55,8 @@ export type {
   WatchOptions,
 } from './inspector-client'
 export { DataClient, graphDataClient } from './data-client'
+export { EnvError, clearEnv, fetchEnvStatus, setEnv } from './env-client'
+export type { EnvItem, EnvSource, EnvStatus } from './env-client'
 export type {
   DataEntry,
   DataDirectoryResponse,

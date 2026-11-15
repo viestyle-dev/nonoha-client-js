@@ -9,7 +9,7 @@ export interface Surface {
   readonly dpr: number
   /** Set the CSS size; true when the backing store changed (contents are lost). */
   setSize(width: number, height: number): boolean
-  /** Re-check devicePixelRatio (cheap; call at the start of a draw); true when it changed. */
+  /** Re-read devicePixelRatio (cheap; call at the start of a draw); true when it changed. */
   syncPixelRatio(): boolean
   /** Reset the transform so drawing uses CSS px. */
   begin(): void

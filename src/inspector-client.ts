@@ -155,6 +155,8 @@ export interface EngineCapabilities {
   engine: string
   inspector?: { enabled: boolean; protocol: number }
   plugin_static?: boolean
+  /** `GET/PUT/DELETE /node-flow/env` (environment values; see env-client). */
+  env_settings?: boolean
 }
 
 /**
