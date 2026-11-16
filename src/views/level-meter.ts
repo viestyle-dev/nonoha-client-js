@@ -124,6 +124,13 @@ export const levelMeterView = defineView({
     let readouts: string[] = []
     let labelFont = ''
     let animating = false
+    // The parts that change only with the layout, theme or channel count
+    // (background, tracks, ticks, labels), drawn once into this canvas and
+    // copied each frame: text is the costly part of a frame.
+    const scale = document.createElement('canvas')
+    const sg = scale.getContext('2d')
+    if (!sg) throw new Error('2D canvas is not available')
+    let scaleDirty = true
 
     function setChannels(n: number) {
       channels = n
@@ -137,6 +144,7 @@ export const levelMeterView = defineView({
       readouts = new Array<string>(n).fill('')
       pendingFrames = 0
       layoutDirty = true
+      scaleDirty = true
     }
 
     function readSettings(settings: Readonly<Record<string, unknown>>) {
@@ -151,6 +159,7 @@ export const levelMeterView = defineView({
 
     function layout() {
       layoutDirty = false
+      scaleDirty = true
       const w = surface.width
       const h = surface.height
       const pad = 6
@@ -182,19 +191,75 @@ export const levelMeterView = defineView({
       for (let i = 0; i < ticks.length; ++i) tickUnits[i] = dbToUnit(ticks[i], minDb, 0)
     }
 
-    /** Fill the level span [u0, u1] (0-1 of the scale) across [c0, c1]. */
-    function span(u0: number, u1: number, c0: number, c1: number) {
+    /** Fill the level span [u0, u1] (0-1 of the scale) across [c0, c1] on `to`. */
+    function span(to: CanvasRenderingContext2D, u0: number, u1: number, c0: number, c1: number) {
       if (u1 <= u0) return
-      if (vertical) g.fillRect(c0, y1 - u1 * length, c1 - c0, (u1 - u0) * length)
-      else g.fillRect(x0 + u0 * length, c0, (u1 - u0) * length, c1 - c0)
+      if (vertical) to.fillRect(c0, y1 - u1 * length, c1 - c0, (u1 - u0) * length)
+      else to.fillRect(x0 + u0 * length, c0, (u1 - u0) * length, c1 - c0)
     }
 
     function bar(u: number, hotU: number, c0: number, c1: number) {
       g.fillStyle = theme.accent
-      span(0, Math.min(u, hotU), c0, c1)
+      span(g, 0, Math.min(u, hotU), c0, c1)
       if (u > hotU) {
         g.fillStyle = theme.series[1] ?? theme.accent
-        span(hotU, u, c0, c1)
+        span(g, hotU, u, c0, c1)
+      }
+    }
+
+    /** Background, tracks and the dB scale, at the main canvas's resolution. */
+    function drawScale(s: CanvasRenderingContext2D) {
+      scaleDirty = false
+      const canvas = surface.canvas
+      if (scale.width !== canvas.width || scale.height !== canvas.height) {
+        scale.width = canvas.width
+        scale.height = canvas.height
+      }
+      const w = surface.width
+      const h = surface.height
+      s.setTransform(w > 0 ? canvas.width / w : 1, 0, 0, h > 0 ? canvas.height / h : 1, 0, 0)
+      s.globalAlpha = 1
+      s.fillStyle = theme.background
+      s.fillRect(0, 0, w, h)
+      s.font = labelFont
+      const n = Math.max(1, channels)
+
+      s.globalAlpha = 0.3
+      s.fillStyle = theme.grid
+      for (let c = 0; c < n; ++c) {
+        const c0 = (vertical ? x0 : y0) + c * slot + gap / 2
+        span(s, 0, 1, c0, c0 + slot - gap)
+      }
+      s.globalAlpha = 1
+      s.fillStyle = theme.textMuted
+      s.strokeStyle = theme.grid
+      s.lineWidth = 1
+      s.beginPath()
+      if (vertical) {
+        s.textAlign = 'right'
+        s.textBaseline = 'middle'
+        for (let i = 0; i < tickUnits.length; ++i) {
+          const y = Math.round(y1 - tickUnits[i] * length) + 0.5
+          s.moveTo(x0 - 4, y)
+          s.lineTo(x0 - 1, y)
+          s.fillText(tickLabels[i], x0 - 6, y)
+        }
+      } else {
+        s.textAlign = 'center'
+        s.textBaseline = 'top'
+        for (let i = 0; i < tickUnits.length; ++i) {
+          const x = Math.round(x0 + tickUnits[i] * length) + 0.5
+          s.moveTo(x, y1 + 1)
+          s.lineTo(x, y1 + 4)
+          s.fillText(tickLabels[i], Math.min(w - 10, Math.max(10, x)), y1 + 4)
+        }
+      }
+      s.stroke()
+
+      if (channels === 0) {
+        s.textAlign = 'center'
+        s.textBaseline = 'middle'
+        s.fillText('Waiting for frames…', w / 2, h / 2)
       }
     }
 
@@ -224,53 +289,13 @@ export const levelMeterView = defineView({
         clipNow[c] = 0
       }
 
-      surface.begin()
-      const w = surface.width
-      const h = surface.height
-      g.fillStyle = theme.background
-      g.fillRect(0, 0, w, h)
-      g.font = labelFont
-      const n = Math.max(1, channels)
-      const hotU = dbToUnit(HOT_DB, minDb, 0)
-
-      // Tracks and scale.
-      g.globalAlpha = 0.3
-      g.fillStyle = theme.grid
-      for (let c = 0; c < n; ++c) {
-        const c0 = (vertical ? x0 : y0) + c * slot + gap / 2
-        span(0, 1, c0, c0 + slot - gap)
-      }
+      if (scaleDirty && sg) drawScale(sg)
+      g.setTransform(1, 0, 0, 1, 0, 0)
       g.globalAlpha = 1
-      g.fillStyle = theme.textMuted
-      g.strokeStyle = theme.grid
-      g.lineWidth = 1
-      g.beginPath()
-      if (vertical) {
-        g.textAlign = 'right'
-        g.textBaseline = 'middle'
-        for (let i = 0; i < tickUnits.length; ++i) {
-          const y = Math.round(y1 - tickUnits[i] * length) + 0.5
-          g.moveTo(x0 - 4, y)
-          g.lineTo(x0 - 1, y)
-          g.fillText(tickLabels[i], x0 - 6, y)
-        }
-      } else {
-        g.textAlign = 'center'
-        g.textBaseline = 'top'
-        for (let i = 0; i < tickUnits.length; ++i) {
-          const x = Math.round(x0 + tickUnits[i] * length) + 0.5
-          g.moveTo(x, y1 + 1)
-          g.lineTo(x, y1 + 4)
-          g.fillText(tickLabels[i], Math.min(w - 10, Math.max(10, x)), y1 + 4)
-        }
-      }
-      g.stroke()
-
-      if (channels === 0) {
-        g.textAlign = 'center'
-        g.textBaseline = 'middle'
-        g.fillText('Waiting for frames…', w / 2, h / 2)
-      }
+      g.drawImage(scale, 0, 0)
+      surface.begin()
+      const hotU = dbToUnit(HOT_DB, minDb, 0)
+      g.font = labelFont
 
       for (let c = 0; c < channels; ++c) {
         const c0 = (vertical ? x0 : y0) + c * slot + gap / 2
@@ -284,7 +309,7 @@ export const levelMeterView = defineView({
         const holdU = dbToUnit(meter.hold[c], minDb, 0)
         if (holdU > 0) {
           g.fillStyle = theme.text
-          span(Math.max(0, holdU - 2 / Math.max(1, length)), holdU, c0, c1)
+          span(g, Math.max(0, holdU - 2 / Math.max(1, length)), holdU, c0, c1)
         }
         // Clip lamp at the 0 dB end.
         g.globalAlpha = meter.clipLeft[c] > 0 ? 1 : 0.3
@@ -351,6 +376,7 @@ export const levelMeterView = defineView({
       themeChanged(next) {
         theme = next
         labelFont = font(10, theme.fontFamily)
+        scaleDirty = true
         wake()
       },
       destroy() {
