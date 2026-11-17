@@ -7,7 +7,9 @@ be used from any framework, from plain scripts, or as an IIFE bundle.
 ## Features
 
 - **GraphClient** — WebSocket connection to a graph endpoint: receive
-  decoded port values in real time and send inputs back to the engine
+  decoded port values in real time and send inputs back to the engine;
+  `subscribeOutput` follows one output port, optionally starting from the
+  value it holds now (outputs are sent only when they change)
 - **Binary protocol parser** — `parsePortValuesBytes` decodes the
   engine's binary port-value format into typed arrays
 - **DataClient** — REST client for the engine's data storage API
@@ -18,21 +20,24 @@ be used from any framework, from plain scripts, or as an IIFE bundle.
   (engine 1.1+): activity statistics for many ports, latest-value
   watches merged per port, automatic acknowledgement, pause while the page
   is hidden, reconnect with backoff
-- **Plugin list** — `fetchPlugins`: the plugins the engine loaded, with
-  where it serves their static files (engine 1.1+)
+- **Engine capabilities** — `fetchEngineCapabilities`: what the engine
+  offers (inspector, plugin static files, environment values; engine 1.1+)
+- **Plugin list** — `fetchPlugins`: the plugins the engine loaded;
+  `pluginStaticUrl` gives the URL of a file in a plugin's static folder,
+  cache-busted by its revision (engine 1.1+)
 
 ## Installation
 
-### As a workspace package (used by nonoha-editor)
+### As a workspace package
 
-This repository is consumed as a git submodule at `packages/nonoha-client-js`
-with an npm workspaces setup:
+Add this repository to an npm workspace (e.g. as a git submodule under
+`packages/`) and depend on it by name:
 
 ```json
 {
   "workspaces": ["packages/*"],
   "dependencies": {
-    "nonoha-client-js": "workspace:*"
+    "nonoha-client-js": "*"
   }
 }
 ```

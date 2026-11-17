@@ -19,3 +19,24 @@ export async function fetchPlugins(engineGatewayUrl: string): Promise<PluginInfo
   if (!res.ok) throw new Error(`plugins: HTTP ${res.status}`)
   return (await res.json()) as PluginInfo[]
 }
+
+/**
+ * URL of a file in a plugin's static folder (`path` relative to the
+ * folder), carrying the folder's revision so a changed file is never
+ * served from the browser cache. null when the plugin has no static folder.
+ */
+export function pluginStaticUrl(
+  engineGatewayUrl: string,
+  plugin: Pick<PluginInfo, 'static' | 'rev'>,
+  path: string,
+): string | null {
+  if (!plugin.static) return null
+  const folder = plugin.static.endsWith('/') ? plugin.static : `${plugin.static}/`
+  const file = path
+    .replace(/^\.?\//, '')
+    .split('/')
+    .map(encodeURIComponent)
+    .join('/')
+  const rev = plugin.rev ? `?rev=${encodeURIComponent(plugin.rev)}` : ''
+  return `http://${engineGatewayUrl}${folder}${file}${rev}`
+}

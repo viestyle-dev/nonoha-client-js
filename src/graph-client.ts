@@ -2,7 +2,20 @@ import { PortData, PortDataType, PortValue } from './types'
 import { parsePortValuesBytes } from './port-parser'
 
 type OutputCallback = (output: PortData) => void
+type ValuesCallback = (values: PortValue[]) => void
 type ClosedCallback = (wasClean: boolean) => void
+
+export interface OutputSubscriptionOptions {
+  /**
+   * Also the value the port holds now, fetched once: `true` delivers it to
+   * the callback like a new value; a function receives it instead (e.g. to
+   * set state without acting on it). It is dropped when a new value arrives
+   * first, since it would be older.
+   */
+  current?: boolean | ValuesCallback
+  /** The current value could not be fetched. */
+  onError?: (error: unknown) => void
+}
 
 export class GraphClient {
   readonly engineGatewayUrl: string
@@ -10,6 +23,8 @@ export class GraphClient {
 
   private endpointSocket: WebSocket | null = null
   private readonly onOutputCallbacks: OutputCallback[] = []
+  /** Per output port; lists are replaced on change, so delivery never allocates. */
+  private readonly portCallbacks = new Map<string, ValuesCallback[]>()
   private readonly onClosedCallbacks: ClosedCallback[] = []
   private readonly textDecoder = new TextDecoder()
   private readonly textEncoder = new TextEncoder()
@@ -50,6 +65,10 @@ export class GraphClient {
         for (let i = 0; i < this.onOutputCallbacks.length; ++i) {
           this.onOutputCallbacks[i](portData)
         }
+        const callbacks = this.portCallbacks.get(portName)
+        if (callbacks) {
+          for (let i = 0; i < callbacks.length; ++i) callbacks[i](values)
+        }
       }
     }
 
@@ -82,6 +101,44 @@ export class GraphClient {
     const index = this.onOutputCallbacks.indexOf(callback)
     if (index !== -1) {
       this.onOutputCallbacks.splice(index, 1)
+    }
+  }
+
+  /**
+   * Values of one output port. A port sends a value only when the graph
+   * dispatches one, so a new subscriber sees nothing until then unless it
+   * asks for the `current` value. Values are valid during the call only (the
+   * arrays are reused for the port's next value). Returns the function that
+   * stops the subscription.
+   */
+  subscribeOutput(portName: string, callback: ValuesCallback, options: OutputSubscriptionOptions = {}): () => void {
+    let active = true
+    let live = false
+    const deliver: ValuesCallback = values => {
+      live = true
+      callback(values)
+    }
+    this.portCallbacks.set(portName, (this.portCallbacks.get(portName) ?? []).concat(deliver))
+    const current = options.current
+    if (current) {
+      this.fetchOutputValues(portName)
+        .then(values => {
+          if (!active || live) return
+          if (current === true) callback(values)
+          else current(values)
+        })
+        .catch(error => {
+          if (active) options.onError?.(error)
+        })
+    }
+    return () => {
+      if (!active) return
+      active = false
+      const list = this.portCallbacks.get(portName)
+      if (!list) return
+      const rest = list.filter(c => c !== deliver)
+      if (rest.length > 0) this.portCallbacks.set(portName, rest)
+      else this.portCallbacks.delete(portName)
     }
   }
 

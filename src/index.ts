@@ -1,20 +1,15 @@
 // Pure JavaScript exports (no React dependencies)
 export * from './types'
 export { GraphClient, makeGraphEndpoint } from './graph-client'
-export type { GraphEndpoint } from './graph-client'
+export type { GraphEndpoint, OutputSubscriptionOptions } from './graph-client'
 export { parsePortValuesBytes } from './port-parser'
-export { fetchPlugins } from './plugin-client'
+export { fetchEngineCapabilities } from './capabilities'
+export type { EngineCapabilities } from './capabilities'
+export { fetchPlugins, pluginStaticUrl } from './plugin-client'
 export type { PluginInfo } from './plugin-client'
-export {
-  InspectorClient,
-  InspectorCloseCode,
-  INSPECTOR_PROTOCOL,
-  SampleFlag,
-  fetchEngineCapabilities,
-} from './inspector-client'
+export { InspectorClient, InspectorCloseCode, INSPECTOR_PROTOCOL, SampleFlag } from './inspector-client'
 export type {
   ActivityEntry,
-  EngineCapabilities,
   InspectorClientOptions,
   InspectorHello,
   InspectorPortRef,
