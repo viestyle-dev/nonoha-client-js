@@ -30,12 +30,13 @@ function emit(client: GraphClient, portName: string, n: number) {
 
 /** fetch of the current value, resolved by the test. */
 function deferredFetch(client: GraphClient) {
-  const pending = new Map<string, (n: number | null) => void>()
+  const pending = new Map<string, (n: number | null | 'none') => void>()
   vi.stubGlobal('fetch', (url: string) => {
     const port = decodeURIComponent(url.split('/outputs/')[1].split('/')[0])
     return new Promise(resolve => {
       pending.set(port, n => {
         if (n === null) return resolve({ ok: false, status: 500 })
+        if (n === 'none') return resolve({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0) })
         const buffer = serialize(client, { portName: port, values: [f32(n)] })
         resolve({ ok: true, status: 200, arrayBuffer: async () => buffer.slice(2 + port.length) })
       })
@@ -84,6 +85,24 @@ describe('GraphClient.subscribeOutput', () => {
     pending.get('level')!(7) // older than 8
     await settle()
     expect(seen).toEqual([8])
+  })
+
+  it('delivers no current value while the port has none (empty body)', async () => {
+    const pending = deferredFetch(client)
+    const seen: number[] = []
+    const errors: unknown[] = []
+    client.subscribeOutput('level', values => seen.push(first(values)), { current: true, onError: e => errors.push(e) })
+    pending.get('level')!('none')
+    await settle()
+    expect(seen).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('reads an empty body as no value', async () => {
+    const pending = deferredFetch(client)
+    const fetched = client.fetchOutputValues('level')
+    pending.get('level')!('none')
+    expect(await fetched).toEqual([])
   })
 
   it('hands the current value to its own callback when given one', async () => {

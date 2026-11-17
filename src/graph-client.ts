@@ -123,7 +123,7 @@ export class GraphClient {
     if (current) {
       this.fetchOutputValues(portName)
         .then(values => {
-          if (!active || live) return
+          if (!active || live || values.length === 0) return
           if (current === true) callback(values)
           else current(values)
         })
@@ -148,11 +148,13 @@ export class GraphClient {
 
   // --- REST API ---
 
+  /** The value an output port holds now; [] while it has none (the engine sends an empty body). */
   async fetchOutputValues(portName: string): Promise<PortValue[]> {
     const url = `http://${this.engineGatewayUrl}/node-flow/graphs/${encodeURIComponent(this.graphName)}/outputs/${encodeURIComponent(portName)}/values`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Failed to fetch output values for '${portName}': ${res.status}`)
     const buf = await res.arrayBuffer()
+    if (buf.byteLength === 0) return []
     const [values] = parsePortValuesBytes(new DataView(buf), 0)
     return values
   }
