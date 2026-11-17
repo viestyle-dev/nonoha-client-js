@@ -18,11 +18,8 @@ be used from any framework, from plain scripts, or as an IIFE bundle.
   (engine 1.1+): activity statistics for many ports, latest-value
   watches merged per port, automatic acknowledgement, pause while the page
   is hidden, reconnect with backoff
-- **View SDK** — `defineView`, `createViewHost`, `mountView`: custom
-  displays shipped in plugins (`static/views/`) that run in nonoha-editor
-  and in any app; built-in views (`builtinViews`)
-- **interpretValue** — guesses a presentation (image, grid, plot, number,
-  text) from a value's type and shape
+- **Plugin list** — `fetchPlugins`: the plugins the engine loaded, with
+  where it serves their static files (engine 1.1+)
 
 ## Installation
 
@@ -104,24 +101,6 @@ if (caps?.inspector?.enabled) {
 Samples carry the latest value (or every row since the last sample with
 `batch: 'since'`); they can miss updates, so values an app depends on
 should come from `$output` ports through `GraphClient`.
-
-### Views
-
-A view module's default export is a view definition (`{ sdk: 1, id,
-inputs, settings, mount(el, ctx) }`, or `defineView({...})` in TypeScript).
-Show one in an app:
-
-```typescript
-import { fetchPlugins, mountView, pluginViewsBase } from 'nonoha-client-js'
-
-const plugin = (await fetchPlugins(gw)).find(p => p.id === 'user_nodes')
-const view = await mountView(`${pluginViewsBase(gw, plugin!)}nagare-stage.js`, element, {
-  engineGatewayUrl: gw,
-  graphName: 'nagare_core',
-  bindings: { energy: 'energy', onsets: 'onsets' },   // view input -> output port
-})
-// later: view.unmount()
-```
 
 ## Development
 

@@ -3,35 +3,8 @@ export * from './types'
 export { GraphClient, makeGraphEndpoint } from './graph-client'
 export type { GraphEndpoint } from './graph-client'
 export { parsePortValuesBytes } from './port-parser'
-export {
-  VIEW_SDK_VERSION,
-  defineView,
-  createViewHost,
-  typeAccepts,
-  inputAccepts,
-  fetchPlugins,
-  pluginViewsBase,
-  fetchViewManifest,
-  loadView,
-} from './view-sdk'
-export type {
-  DefinedView,
-  ViewContext,
-  ViewDefinition,
-  ViewHost,
-  ViewHostOptions,
-  ViewInputSpec,
-  ViewInstance,
-  ViewManifest,
-  ViewSettingSpec,
-  ViewTheme,
-  PluginStaticInfo,
-} from './view-sdk'
-export { builtinViews, spectrogramView, levelMeterView } from './views'
-export { mountView, defaultViewTheme } from './mount-view'
-export type { MountViewOptions, MountedView, ViewBinding } from './mount-view'
-export { interpretValue, alternativeKinds } from './interpret'
-export type { ValueKind } from './interpret'
+export { fetchPlugins } from './plugin-client'
+export type { PluginInfo } from './plugin-client'
 export {
   InspectorClient,
   InspectorCloseCode,
