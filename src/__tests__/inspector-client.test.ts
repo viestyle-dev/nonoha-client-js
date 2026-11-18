@@ -41,11 +41,11 @@ class FakeSocket {
   }
 }
 
-/** Sample frame with one f32 value of shape (1, n). */
-function sampleFrame(watchId: number, frameSeq: number, data: number[], flags = 0): ArrayBuffer {
-  const truncated = (flags & SampleFlag.Truncated) !== 0
-  const payload = truncated ? 1 : 1 + 1 + 1 + 2 + 4 + 4 * data.length
-  const buffer = new ArrayBuffer(26 + payload)
+/** Sample frame with one f32 value of shape (1, n); `steps`: one slot's strides. */
+function sampleFrame(watchId: number, frameSeq: number, data: number[], flags = 0, steps: number[] | null = null): ArrayBuffer {
+  const stepBytes = steps ? 1 + 2 * steps.length : 0
+  const payload = 1 + 1 + 1 + 2 + 4 + 4 * data.length
+  const buffer = new ArrayBuffer(26 + stepBytes + payload)
   const v = new DataView(buffer)
   v.setUint8(0, 0x21)
   v.setUint8(1, 1)
@@ -55,11 +55,14 @@ function sampleFrame(watchId: number, frameSeq: number, data: number[], flags = 
   v.setUint32(12, 100 + frameSeq)
   v.setFloat64(16, 12.5)
   v.setUint8(24, flags)
-  v.setUint8(25, 0)
+  v.setUint8(25, steps ? 1 : 0)
   let o = 26
-  if (truncated) {
-    v.setUint8(o, 0)
-    return buffer
+  if (steps) {
+    v.setUint8(o++, steps.length)
+    for (const x of steps) {
+      v.setUint16(o, x)
+      o += 2
+    }
   }
   v.setUint8(o++, 1) // value count
   v.setUint8(o++, PortDataType.Float32)
@@ -172,14 +175,73 @@ describe('InspectorClient', () => {
     expect(s.sent).toEqual(['{"op":"ack","seq":7}', '{"op":"ack","seq":8}'])
   })
 
-  it('delivers truncated samples without values', () => {
+  it('reports a sample too large to send and goes on', () => {
     const c = client()
     c.connect()
-    FakeSocket.last!.open()
-    let values: unknown = 'unset'
-    c.watch(REF, {}, { onSample: (sample) => (values = sample.values) })
-    FakeSocket.last!.binary(sampleFrame(1, 1, [], SampleFlag.Truncated))
-    expect(values).toBeNull()
+    const s = FakeSocket.last!
+    s.open()
+    const errors: string[] = []
+    const got: number[] = []
+    c.watch(REF, {}, { onSample: (sample) => got.push(sample.values.length), onError: (code) => errors.push(code) })
+    s.text({ t: 'error', id: 1, code: 'too_large', message: 'f32[1x5000]: 20000 bytes, more than max_bytes 1024' })
+    s.binary(sampleFrame(1, 1, [1, 2, 3], SampleFlag.Reduced | SampleFlag.Gap))
+    expect(errors).toEqual(['too_large'])
+    expect(got).toEqual([1]) // every sample carries values
+  })
+
+  it('reuses the steps arrays while the slots stay the same', () => {
+    const c = client()
+    c.connect()
+    const s = FakeSocket.last!
+    s.open()
+    const steps: number[][][] = []
+    c.watch(REF, {}, { onSample: (sample) => steps.push(sample.steps) })
+    s.binary(sampleFrame(1, 1, [1, 2], SampleFlag.Reduced, [3, 3]))
+    s.binary(sampleFrame(1, 2, [1, 2], SampleFlag.Reduced, [4, 4]))
+    expect(steps[1]).toBe(steps[0])
+    expect(steps[1]).toEqual([[4, 4]])
+  })
+
+  it('never gives a new watch an id still in use', () => {
+    const c = client()
+    c.connect()
+    const s = FakeSocket.last!
+    s.open()
+    c.watch(REF, {}, { onSample: () => {} }) // id 1, kept
+    ;(c as unknown as { nextWatchId: number }).nextWatchId = 0xffff // as after 65534 short-lived watches
+    c.watch({ node: 'A', dir: 'out', port: 'x' }, {}, { onSample: () => {} }) // 65535
+    c.watch({ node: 'B', dir: 'out', port: 'x' }, {}, { onSample: () => {} }) // wraps: 1 is taken
+    const ids = s.ops().filter((op) => op.op === 'watch').map((op) => op.id)
+    expect(ids).toEqual([1, 65535, 2])
+  })
+
+  it('keeps the activity set within the engine limit', () => {
+    const c = client()
+    c.setActivityPorts([REF, { node: 'A', dir: 'out', port: 'x' }, { node: 'B', dir: 'out', port: 'x' }])
+    c.connect()
+    const s = FakeSocket.last!
+    s.open()
+    s.text({ t: 'hello', protocol: 1, limits: { max_activity_ports: 2 }, plugins: [] })
+    const sets = s.ops().filter((op) => op.op === 'activity')
+    expect(sets.map((op) => op.ports.length)).toEqual([3, 2]) // resent once the limit is known
+  })
+
+  it('reconnects after the engine ended a session that stopped acknowledging', () => {
+    vi.useFakeTimers()
+    try {
+      const c = client()
+      const reasons: string[][] = []
+      c.onStatus((st) => reasons.push(st.reasons))
+      c.connect()
+      FakeSocket.last!.open()
+      const count = FakeSocket.count
+      FakeSocket.last!.drop(InspectorCloseCode.Ended)
+      expect(reasons[reasons.length - 1]).toEqual(['ended'])
+      vi.advanceTimersByTime(1000)
+      expect(FakeSocket.count).toBe(count + 1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('updates activity entries in place and reports the changed ones', () => {

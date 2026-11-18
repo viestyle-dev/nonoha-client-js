@@ -96,16 +96,34 @@ if (caps?.inspector?.enabled) {
   const watch = inspector.watch(
     { node: 'Resize_1', dir: 'out', port: 'dst' },
     { intervalMs: 100, maxBytes: 256 * 1024, autoStride: [0, 1] },   // stride H and W to fit
-    { onSample: sample => draw(sample.values) },
+    { onSample: sample => draw(sample.values), onError: (code, message) => console.warn(code, message) },
   )
   inspector.connect()
   // later: watch.unwatch(); inspector.close()
 }
 ```
 
-Samples carry the latest value (or every row since the last sample with
+Samples carry the latest value (or every item since the last sample with
 `batch: 'since'`); they can miss updates, so values an app depends on
 should come from `$output` ports through `GraphClient`.
+
+What a watch samples (`WatchOptions`). A port value's first axis is its
+batch: a dispatch carries one item (an image, `(1, H, W, 3)`) or many (an
+audio block, `(512, channels)`).
+
+| Option | Meaning |
+|---|---|
+| `batch` | `'last'` item (default), `'all'` items of the latest dispatch, the last N items, or `'since'`: every item since the last sample (`SampleFlag.Gap` when some were lost) |
+| `maxBytes` | One sample's data, every slot together (default 256 KiB, at most 4 MiB) |
+| `autoStride` | Non-batch dimensions that may be strided when one item does not fit, e.g. `[0, 1]` for an image's height and width |
+| `slice`, `cast` | Per non-batch dimension `[start, stop, step]`; `'f32'` / `'f64'` (complex values come as their magnitude) |
+| `intervalMs` | Minimum time between samples (the engine stretches it when sampling takes too much CPU) |
+
+Fitting `maxBytes`: too many items, the newest that fit are kept; one item
+too large, the `autoStride` dimensions are strided by one step for every
+slot (`sample.steps`; a dimension never exceeds 65535); still too large,
+nothing is sent and `onError('too_large', …)` reports it once, until a
+sample fits again. `sample.t` is when the sampled dispatch was taken.
 
 ## Development
 

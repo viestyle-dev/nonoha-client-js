@@ -28,22 +28,25 @@ export const INSPECTOR_PROTOCOL = 1
 export const InspectorCloseCode = {
   Disabled: 4403,
   NoGraph: 4404,
+  /** The engine ended the session: the client stopped reading or acknowledging (reconnects). */
+  Ended: 4408,
   TooMany: 4429,
 } as const
 
 const FRAME_SAMPLE = 0x21
 const HEADER_SIZE = 26 // u8 u8 u16 u32 u32 u32 f64 u8 u8
+const WATCH_ID_MAX = 0xffff // frames carry the watch id as u16
 
 /** Sample flags (bit set). */
 export const SampleFlag = {
-  /** Strides were applied to fit max_bytes (see `steps`). */
+  /** Cut by `slice`, or to fit `maxBytes`: fewer items, or strides (see `steps`). */
   Reduced: 0x01,
-  /** The values hold every batch row since the last sample, not just the last. */
+  /** Every item of the dispatch (`batch: 'all'`), or of every dispatch since the last sample (`'since'`). */
   BatchAll: 0x02,
-  /** Values were cast (e.g. f64 to f32). */
+  /** Numbers converted: `cast`, or complex values sent as their magnitude. */
   Cast: 0x04,
-  /** Too large even after reduction: `values` is null. */
-  Truncated: 0x08,
+  /** `batch: 'since'`: items were lost before this sample (the engine could not keep or send them all). */
+  Gap: 0x10,
 } as const
 
 export type PortDirection = 'in' | 'out'
@@ -55,18 +58,30 @@ export interface InspectorPortRef {
   port: string
 }
 
+/**
+ * What a watch samples. A port value's first axis is its batch: a dispatch
+ * carries one item (an image, `(1, H, W, 3)`) or many (an audio block,
+ * `(512, channels)`).
+ *
+ * A sample is fitted to `maxBytes` (every slot together): when the items
+ * chosen by `batch` do not fit, the newest that fit are kept; when one item
+ * alone is too large, the `autoStride` dimensions are strided (every slot by
+ * one step, shown in `steps`); when it still does not fit, nothing is sent
+ * and `onError` gets `too_large` (once, until a sample fits again).
+ */
 export interface WatchOptions {
   /** Minimum time between samples (the engine may stretch it under load). */
   intervalMs?: number
-  /** Byte budget per sample; larger values are strided (see `autoStride`). */
+  /** Byte budget of one sample, every slot together (default: the engine's, 256 KiB). */
   maxBytes?: number
-  /** 'last' batch row, 'all' rows of the latest dispatch, 'since' every row since the last sample, or the last N rows. */
+  /** Which items: 'last' item, 'all' items of the latest dispatch, 'since' every item since the last sample, or the last N items. */
   batch?: 'last' | 'all' | 'since' | number
   /** Per non-batch dimension (0 = first after the batch): [start, stop, step] or null. */
   slice?: ([number | null, number | null, number | null] | null)[] | null
   /**
-   * Non-batch dimensions (0 = first after the batch) that may be strided to
-   * fit `maxBytes`, e.g. [0, 1] for the height and width of an image.
+   * Non-batch dimensions (0 = first after the batch) that may be strided
+   * when one item does not fit `maxBytes`, e.g. [0, 1] for the height and
+   * width of an image.
    */
   autoStride?: number[]
   cast?: 'f32' | 'f64' | null
@@ -78,13 +93,15 @@ export interface InspectorSample {
   sampleSeq: number
   /** How many times the port has dispatched (counts values the sampling skipped). */
   dispatchCount: number
-  /** Engine monotonic time of the sampled dispatch, in seconds. */
+  /**
+   * Engine monotonic time, in seconds, the sampled dispatch was taken (for
+   * `batch: 'since'`: the newest dispatch, at the engine's tick resolution).
+   */
   t: number
   flags: number
   /** Per value slot: the stride applied to each non-batch dimension (empty when not reduced). */
   steps: number[][]
-  /** null when the sample was truncated. */
-  values: PortValue[] | null
+  values: PortValue[]
 }
 
 export interface WatchInfo {
@@ -99,6 +116,11 @@ export interface WatchCallbacks {
   onInfo?: (info: WatchInfo) => void
   /** The port was removed or replaced; the watch resumes if it comes back. */
   onGone?: () => void
+  /**
+   * `too_large` (a sample does not fit `maxBytes` even reduced; the watch
+   * goes on and samples arrive again once one fits), `encode` (the value
+   * could not be encoded), `bad_request` (e.g. too many watches).
+   */
   onError?: (code: string, message: string) => void
 }
 
@@ -118,7 +140,9 @@ export interface ActivityEntry {
   hz: number
   /** Seconds since the last dispatch, or null if none yet. */
   age: number | null
+  /** The type name ports use, e.g. "f32", "u8", "str" (as in `WatchInfo.types`, without the shape). */
   dtype: string | null
+  /** Shape of the latest dispatch's first value, with the batch. */
   shape: number[] | null
   /** [min, max, mean] for small numeric values. */
   stats: [number, number, number] | null
@@ -315,7 +339,9 @@ export class InspectorClient {
       this.setStatus({ state: 'closed', reasons: [] })
       return
     }
-    this.setStatus({ state: 'connecting', reasons: code === InspectorCloseCode.TooMany ? ['too_many'] : [] })
+    const reasons =
+      code === InspectorCloseCode.TooMany ? ['too_many'] : code === InspectorCloseCode.Ended ? ['ended'] : []
+    this.setStatus({ state: 'connecting', reasons })
     const delay = this.backoffMs
     this.backoffMs = Math.min(MAX_BACKOFF_MS, this.backoffMs * 2)
     this.reconnectTimer = setTimeout(() => {
@@ -349,8 +375,12 @@ export class InspectorClient {
     const key = watchKey(ref, options)
     let watch = this.watchesByKey.get(key)
     if (!watch) {
-      const id = this.nextWatchId
-      this.nextWatchId = id >= 0xffff ? 1 : id + 1
+      // A free id: after a wrap, one in use would take over a live watch
+      let id = this.nextWatchId
+      for (let tries = 0; this.watchesById.has(id) && tries < WATCH_ID_MAX; ++tries) {
+        id = id >= WATCH_ID_MAX ? 1 : id + 1
+      }
+      this.nextWatchId = id >= WATCH_ID_MAX ? 1 : id + 1
       watch = {
         id,
         key,
@@ -359,7 +389,7 @@ export class InspectorClient {
         subscribers: [],
         intervalMs: Infinity,
         info: null,
-        sample: { watchId: id, frameSeq: 0, sampleSeq: 0, dispatchCount: 0, t: 0, flags: 0, steps: NO_STEPS, values: null },
+        sample: { watchId: id, frameSeq: 0, sampleSeq: 0, dispatchCount: 0, t: 0, flags: 0, steps: NO_STEPS, values: [] },
         previous: undefined,
       }
       this.watchesByKey.set(key, watch)
@@ -476,9 +506,11 @@ export class InspectorClient {
   }
 
   private sendActivity(): void {
+    // The engine refuses a set larger than its limit whole: send the first ones
+    const max = this._hello?.limits.max_activity_ports ?? Infinity
     const ports: { id: number; node: string; dir: PortDirection; port: string }[] = []
     this.activityPorts.forEach(({ id, entry }) => {
-      ports.push({ id, node: entry.ref.node, dir: entry.ref.dir, port: entry.ref.port })
+      if (ports.length < max) ports.push({ id, node: entry.ref.node, dir: entry.ref.dir, port: entry.ref.port })
     })
     this.sendJson({ op: 'activity', interval_ms: this.activityIntervalMs, ports })
   }
@@ -536,6 +568,8 @@ export class InspectorClient {
           break
         }
         this._hello = { protocol: message.protocol, limits: message.limits ?? {}, plugins: message.plugins ?? [] }
+        // The set sent on open did not know the limit yet
+        if (this.activityPorts.size > (this._hello.limits.max_activity_ports ?? Infinity)) this.sendActivity()
         this.engineStatus = { state: 'ok', reasons: [] }
         this.setStatus(this.hidden ? { state: 'hidden', reasons: [] } : this.engineStatus)
         const hello = this._hello
@@ -592,25 +626,22 @@ export class InspectorClient {
     if (slots === 0) {
       sample.steps = NO_STEPS
     } else {
-      const steps: number[][] = new Array(slots)
+      // Reused while the slots and their ranks stay the same (every frame of a watch, usually)
+      let steps = sample.steps
+      if (steps === NO_STEPS || steps.length !== slots) steps = sample.steps = new Array(slots)
       for (let s = 0; s < slots; ++s) {
         const n = view.getUint8(offset++)
-        const dims: number[] = new Array(n)
+        let dims = steps[s]
+        if (!dims || dims.length !== n) dims = steps[s] = new Array(n)
         for (let d = 0; d < n; ++d) {
           dims[d] = view.getUint16(offset)
           offset += 2
         }
-        steps[s] = dims
       }
-      sample.steps = steps
     }
-    if (flags & SampleFlag.Truncated) {
-      sample.values = null
-    } else {
-      const [values] = parsePortValuesBytes(view, offset, watch.previous)
-      watch.previous = values
-      sample.values = values
-    }
+    const [values] = parsePortValuesBytes(view, offset, watch.previous)
+    watch.previous = values
+    sample.values = values
     const subscribers = watch.subscribers
     for (let i = 0; i < subscribers.length; ++i) subscribers[i].callbacks.onSample(sample)
   }
