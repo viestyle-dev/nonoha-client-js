@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { InspectorClient, InspectorCloseCode, SampleFlag } from '../inspector-client'
 import { PortDataType } from '../types'
 
@@ -219,6 +219,37 @@ describe('InspectorClient', () => {
     s.drop(InspectorCloseCode.Disabled)
     expect(states).toEqual(['connecting', 'ok', 'paused', 'disabled'])
     expect(FakeSocket.count).toBe(1) // no reconnect
+  })
+
+  it('resumes the engine only on forceResume; tab visibility pauses and resumes this connection', () => {
+    const listeners: Record<string, () => void> = {}
+    const fakeDocument = {
+      visibilityState: 'visible',
+      addEventListener: (type: string, fn: () => void) => {
+        listeners[type] = fn
+      },
+      removeEventListener: () => {},
+    }
+    vi.stubGlobal('document', fakeDocument)
+    try {
+      const c = new InspectorClient('localhost:8000', 'app', {
+        WebSocketImpl: FakeSocket as unknown as typeof WebSocket,
+      })
+      c.connect()
+      const s = FakeSocket.last!
+      s.open()
+      s.sent.length = 0
+      fakeDocument.visibilityState = 'hidden'
+      listeners.visibilitychange()
+      fakeDocument.visibilityState = 'visible'
+      listeners.visibilitychange()
+      expect(s.ops()).toEqual([{ op: 'pause' }, { op: 'resume' }])
+      s.sent.length = 0
+      c.forceResume()
+      expect(s.ops()).toEqual([{ op: 'force_resume' }])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('refuses an unknown protocol version', () => {
