@@ -1,6 +1,6 @@
 {
   "name": "nonoha-client-js",
-  "version": "1.0.0",
+  "version": "1.1.0-dev.0",
   "description": "TypeScript client for nonoha-engine (pure JavaScript, no React dependencies)",
   "license": "Apache-2.0",
   "repository": {
@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc",
     "build:esm": "tsc",
-    "build:iife": "esbuild src/index.ts --bundle --format=iife --global-name=NonohaClient --outfile=dist/nonoha-client.iife.js --target=es2020",
+    "build:iife": "node scripts/build-iife.mjs",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "test": "vitest run",
