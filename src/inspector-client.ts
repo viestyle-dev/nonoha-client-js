@@ -137,6 +137,11 @@ export interface ActivityEntry {
   ref: InspectorPortRef
   /** Dispatches since the probe was attached. */
   count: number
+  /**
+   * Dispatches per second, averaged over about a second. 0 when the port
+   * stopped (no dispatch for two of its periods, 1 s to 10 s; the engine
+   * decides) or its rate is not known yet (the first dispatch after a stop).
+   */
   hz: number
   /** Seconds since the last dispatch, or null if none yet. */
   age: number | null
