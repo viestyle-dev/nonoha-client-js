@@ -29,9 +29,11 @@ function emit(client: GraphClient, portName: string, n: number) {
 }
 
 /** fetch of the current value, resolved by the test. */
+/** Requests for output values wait until answered; the engine wants no token (its capabilities: 404). */
 function deferredFetch(client: GraphClient) {
   const pending = new Map<string, (n: number | null | 'none') => void>()
   vi.stubGlobal('fetch', (url: string) => {
+    if (!url.includes('/outputs/')) return Promise.resolve({ ok: false, status: 404 })
     const port = decodeURIComponent(url.split('/outputs/')[1].split('/')[0])
     return new Promise(resolve => {
       pending.set(port, n => {
@@ -42,7 +44,11 @@ function deferredFetch(client: GraphClient) {
       })
     })
   })
-  return pending
+  // The request leaves after the engine's access is known: answer once it has
+  return async (port: string, n: number | null | 'none') => {
+    await settle()
+    pending.get(port)!(n)
+  }
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -68,63 +74,63 @@ describe('GraphClient.subscribeOutput', () => {
   })
 
   it('delivers the current value first when asked', async () => {
-    const pending = deferredFetch(client)
+    const answer = deferredFetch(client)
     const seen: number[] = []
     client.subscribeOutput('level', values => seen.push(first(values)), { current: true })
-    pending.get('level')!(7)
+    await answer('level', 7)
     await settle()
     emit(client, 'level', 8)
     expect(seen).toEqual([7, 8])
   })
 
   it('drops the current value when a new one arrived before it', async () => {
-    const pending = deferredFetch(client)
+    const answer = deferredFetch(client)
     const seen: number[] = []
     client.subscribeOutput('level', values => seen.push(first(values)), { current: true })
     emit(client, 'level', 8)
-    pending.get('level')!(7) // older than 8
+    await answer('level', 7) // older than 8
     await settle()
     expect(seen).toEqual([8])
   })
 
   it('delivers no current value while the port has none (empty body)', async () => {
-    const pending = deferredFetch(client)
+    const answer = deferredFetch(client)
     const seen: number[] = []
     const errors: unknown[] = []
     client.subscribeOutput('level', values => seen.push(first(values)), { current: true, onError: e => errors.push(e) })
-    pending.get('level')!('none')
+    await answer('level', 'none')
     await settle()
     expect(seen).toEqual([])
     expect(errors).toEqual([])
   })
 
   it('reads an empty body as no value', async () => {
-    const pending = deferredFetch(client)
+    const answer = deferredFetch(client)
     const fetched = client.fetchOutputValues('level')
-    pending.get('level')!('none')
+    await answer('level', 'none')
     expect(await fetched).toEqual([])
   })
 
   it('hands the current value to its own callback when given one', async () => {
-    const pending = deferredFetch(client)
+    const answer = deferredFetch(client)
     const live: number[] = []
     const current: number[] = []
     client.subscribeOutput('clear', values => live.push(first(values)), { current: values => current.push(first(values)) })
-    pending.get('clear')!(1)
+    await answer('clear', 1)
     await settle()
     expect(live).toEqual([])
     expect(current).toEqual([1])
   })
 
   it('reports nothing after it is stopped', async () => {
-    const pending = deferredFetch(client)
+    const answer = deferredFetch(client)
     const seen: number[] = []
     const errors: unknown[] = []
     const stop = client.subscribeOutput('a', values => seen.push(first(values)), { current: true, onError: e => errors.push(e) })
     const stopB = client.subscribeOutput('b', () => {}, { current: true, onError: e => errors.push(e) })
     stop()
-    pending.get('a')!(1)
-    pending.get('b')!(null)
+    await answer('a', 1)
+    await answer('b', null)
     await settle()
     expect(seen).toEqual([])
     expect(errors.length).toBe(1) // only b, still subscribed

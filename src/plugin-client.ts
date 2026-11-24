@@ -1,3 +1,6 @@
+import { engineFetch } from './engine'
+import { httpBase } from './gateway'
+
 /** A plugin the engine loaded (GET /node-flow/plugins). */
 export interface PluginInfo {
   /** Module name, e.g. "cv_nodes". */
@@ -14,7 +17,7 @@ export interface PluginInfo {
 
 /** Plugins loaded by the engine; [] when the engine has no plugin list (before 1.1). */
 export async function fetchPlugins(engineGatewayUrl: string): Promise<PluginInfo[]> {
-  const res = await fetch(`http://${engineGatewayUrl}/node-flow/plugins`)
+  const res = await engineFetch(engineGatewayUrl, '/node-flow/plugins')
   if (res.status === 404) return []
   if (!res.ok) throw new Error(`plugins: HTTP ${res.status}`)
   return (await res.json()) as PluginInfo[]
@@ -38,5 +41,5 @@ export function pluginStaticUrl(
     .map(encodeURIComponent)
     .join('/')
   const rev = plugin.rev ? `?rev=${encodeURIComponent(plugin.rev)}` : ''
-  return `http://${engineGatewayUrl}${folder}${file}${rev}`
+  return `${httpBase(engineGatewayUrl)}${folder}${file}${rev}`
 }

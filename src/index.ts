@@ -3,6 +3,19 @@ export * from './types'
 export { GraphClient, makeGraphEndpoint } from './graph-client'
 export type { GraphEndpoint, OutputSubscriptionOptions } from './graph-client'
 export { parsePortValuesBytes } from './port-parser'
+export { httpBase, wsBase } from './gateway'
+export {
+  dataFileUrl,
+  engineAuthorization,
+  engineFetch,
+  engineToken,
+  engineWebSocket,
+  fetchAccessMe,
+  forgetEngineToken,
+  prepareEngine,
+  setEngineToken,
+} from './engine'
+export type { AccessLevel, AccessMe, EngineAccess } from './engine'
 export { fetchEngineCapabilities } from './capabilities'
 export type { EngineCapabilities } from './capabilities'
 export { fetchPlugins, pluginStaticUrl } from './plugin-client'

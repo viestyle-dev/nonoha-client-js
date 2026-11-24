@@ -81,7 +81,11 @@ const data = graphDataClient('127.0.0.1:8000', 'my_graph')
 ```
 
 The engine gateway URL is a host:port string; connections use
-`ws://` / `http://` (a local engine on `127.0.0.1:8000` by default).
+`ws://` / `http://` (a local engine on `127.0.0.1:8000` by default). An
+engine behind a TLS front is given as a full origin (`https://host`), or
+reached the way the page itself was, when the gateway is the page's host.
+Requests of your own get the same bases from `httpBase(gateway)` and
+`wsBase(gateway)`.
 
 ### Inspecting ports (engine 1.1+)
 

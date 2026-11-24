@@ -1,3 +1,5 @@
+import { engineFetch } from './engine'
+
 /**
  * Environment values of an engine (API keys and other per-deployment
  * settings). The engine only ever returns names and status: a value can be
@@ -39,8 +41,8 @@ export class EnvError extends Error {
   }
 }
 
-async function requestEnv(url: string, init?: RequestInit): Promise<EnvStatus> {
-  const res = await fetch(url, init)
+async function requestEnv(engineGatewayUrl: string, path: string, init?: RequestInit): Promise<EnvStatus> {
+  const res = await engineFetch(engineGatewayUrl, path, init)
   if (!res.ok) {
     let detail = ''
     try {
@@ -54,14 +56,13 @@ async function requestEnv(url: string, init?: RequestInit): Promise<EnvStatus> {
   return (await res.json()) as EnvStatus
 }
 
-function envUrl(engineGatewayUrl: string, name?: string): string {
-  const base = `http://${engineGatewayUrl}/node-flow/env`
-  return name === undefined ? base : `${base}/${encodeURIComponent(name)}`
+function envPath(name?: string): string {
+  return name === undefined ? '/node-flow/env' : `/node-flow/env/${encodeURIComponent(name)}`
 }
 
 /** Names the loaded graphs use and what is set (never the values). */
 export function fetchEnvStatus(engineGatewayUrl: string): Promise<EnvStatus> {
-  return requestEnv(envUrl(engineGatewayUrl))
+  return requestEnv(engineGatewayUrl, envPath())
 }
 
 /**
@@ -69,7 +70,7 @@ export function fetchEnvStatus(engineGatewayUrl: string): Promise<EnvStatus> {
  * restart. Resolves to the new status.
  */
 export function setEnv(engineGatewayUrl: string, name: string, value: string): Promise<EnvStatus> {
-  return requestEnv(envUrl(engineGatewayUrl, name), {
+  return requestEnv(engineGatewayUrl, envPath(name), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ value }),
@@ -78,5 +79,5 @@ export function setEnv(engineGatewayUrl: string, name: string, value: string): P
 
 /** Remove a value from the engine's .env. */
 export function clearEnv(engineGatewayUrl: string, name: string): Promise<EnvStatus> {
-  return requestEnv(envUrl(engineGatewayUrl, name), { method: 'DELETE' })
+  return requestEnv(engineGatewayUrl, envPath(name), { method: 'DELETE' })
 }

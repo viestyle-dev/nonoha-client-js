@@ -1,5 +1,6 @@
 import { PortData, PortDataType, PortValue } from './types'
 import { parsePortValuesBytes } from './port-parser'
+import { engineFetch, engineWebSocket } from './engine'
 
 type OutputCallback = (output: PortData) => void
 type ValuesCallback = (values: PortValue[]) => void
@@ -39,8 +40,7 @@ export class GraphClient {
 
   connect(): void {
     if (this.endpointSocket) return
-    const url = `ws://${this.engineGatewayUrl}/node-flow/graphs/${this.graphName}/endpoint/ws`
-    const socket = new WebSocket(url)
+    const socket = engineWebSocket(this.engineGatewayUrl, `/node-flow/graphs/${this.graphName}/endpoint/ws`)
     socket.binaryType = "arraybuffer"
 
     socket.onmessage = (event) => {
@@ -150,8 +150,10 @@ export class GraphClient {
 
   /** The value an output port holds now; [] while it has none (the engine sends an empty body). */
   async fetchOutputValues(portName: string): Promise<PortValue[]> {
-    const url = `http://${this.engineGatewayUrl}/node-flow/graphs/${encodeURIComponent(this.graphName)}/outputs/${encodeURIComponent(portName)}/values`
-    const res = await fetch(url)
+    const res = await engineFetch(
+      this.engineGatewayUrl,
+      `/node-flow/graphs/${encodeURIComponent(this.graphName)}/outputs/${encodeURIComponent(portName)}/values`,
+    )
     if (!res.ok) throw new Error(`Failed to fetch output values for '${portName}': ${res.status}`)
     const buf = await res.arrayBuffer()
     if (buf.byteLength === 0) return []

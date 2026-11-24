@@ -1,3 +1,6 @@
+import type { EngineAccess } from './engine'
+import { engineFetch } from './engine'
+
 /** What an engine offers (`GET /node-flow/capabilities`). */
 export interface EngineCapabilities {
   engine: string
@@ -6,6 +9,8 @@ export interface EngineCapabilities {
   plugin_static?: boolean
   /** `GET/PUT/DELETE /node-flow/env` (environment values; see env-client). */
   env_settings?: boolean
+  /** Tokens and levels (engine 1.3+; see engine.ts). Absent: everyone may do everything. */
+  access?: EngineAccess
 }
 
 /**
@@ -16,7 +21,7 @@ export async function fetchEngineCapabilities(
   engineGatewayUrl: string,
   init?: RequestInit,
 ): Promise<EngineCapabilities | null> {
-  const res = await fetch(`http://${engineGatewayUrl}/node-flow/capabilities`, init)
+  const res = await engineFetch(engineGatewayUrl, '/node-flow/capabilities', init)
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`capabilities: HTTP ${res.status}`)
   return (await res.json()) as EngineCapabilities

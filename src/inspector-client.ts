@@ -1,5 +1,6 @@
 import { PortValue } from './types'
 import { parsePortValuesBytes } from './port-parser'
+import { engineWebSocket } from './engine'
 
 /**
  * Client for the engine's inspector WebSocket
@@ -306,8 +307,11 @@ export class InspectorClient {
 
   private open(): void {
     const Impl = this.WebSocketImpl ?? WebSocket
-    const url = `ws://${this.engineGatewayUrl}/node-flow/graphs/${encodeURIComponent(this.graphName)}/inspector/ws`
-    const socket = new Impl(url)
+    const socket = engineWebSocket(
+      this.engineGatewayUrl,
+      `/node-flow/graphs/${encodeURIComponent(this.graphName)}/inspector/ws`,
+      Impl,
+    )
     socket.binaryType = 'arraybuffer'
     this.socket = socket
     this.setStatus({ state: 'connecting', reasons: [] })

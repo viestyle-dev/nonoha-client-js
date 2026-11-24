@@ -1,3 +1,6 @@
+import { engineAuthorization, engineFetch, prepareEngine } from "./engine"
+import { httpBase } from "./gateway"
+
 export interface DataEntry {
   name: string
   type: "file" | "directory"
@@ -80,8 +83,9 @@ export class DataClient {
     this.basePath = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath
   }
 
+  /** The route of `path` in the data root (requests go through `engineFetch`). */
   private buildUrl(path: string, raw?: boolean): string {
-    const base = `http://${this.engineGatewayUrl}${this.basePath}/`
+    const base = `${this.basePath}/`
     if (!path) {
       return raw ? `${base}?raw` : base
     }
@@ -93,7 +97,7 @@ export class DataClient {
   async fetchPath(
     path: string,
   ): Promise<DataDirectoryResponse | DataFileResponse> {
-    const response = await fetch(this.buildUrl(path))
+    const response = await engineFetch(this.engineGatewayUrl, this.buildUrl(path))
     if (!response.ok) {
       const text = await response.text()
       throw new Error(text || `HTTP ${response.status}`)
@@ -104,7 +108,7 @@ export class DataClient {
   async fetchFileRaw(
     filePath: string,
   ): Promise<{ text: string; blob: Blob }> {
-    const response = await fetch(this.buildUrl(filePath, true))
+    const response = await engineFetch(this.engineGatewayUrl, this.buildUrl(filePath, true))
     if (!response.ok) {
       const text = await response.text()
       throw new Error(text || `HTTP ${response.status}`)
@@ -122,7 +126,7 @@ export class DataClient {
     if (options?.recursive) {
       url += (url.includes("?") ? "&" : "?") + "recursive=true"
     }
-    const response = await fetch(url, { method: "DELETE" })
+    const response = await engineFetch(this.engineGatewayUrl, url, { method: "DELETE" })
     if (!response.ok) {
       const err = await parseErrorResponse(response)
       throwApiError(err.detail, err.code)
@@ -131,7 +135,7 @@ export class DataClient {
 
   async createDirectory(path: string): Promise<CreateDirectoryResponse> {
     const url = this.buildUrl(path) + "?type=directory"
-    const response = await fetch(url, { method: "PUT" })
+    const response = await engineFetch(this.engineGatewayUrl, url, { method: "PUT" })
     if (!response.ok) {
       const err = await parseErrorResponse(response)
       throwApiError(err.detail, err.code)
@@ -139,18 +143,22 @@ export class DataClient {
     return response.json()
   }
 
-  uploadFile(
+  async uploadFile(
     path: string,
     file: File,
     options?: UploadOptions,
   ): Promise<DataFileResponse> {
+    // XMLHttpRequest, for the upload's progress: the token is set here as engineFetch would
+    await prepareEngine(this.engineGatewayUrl)
+    const authorization = engineAuthorization(this.engineGatewayUrl)
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
-      let url = this.buildUrl(path)
+      let url = `${httpBase(this.engineGatewayUrl)}${this.buildUrl(path)}`
       if (options?.overwrite) {
         url += (url.includes("?") ? "&" : "?") + "overwrite=true"
       }
       xhr.open("PUT", url)
+      if (authorization !== null) xhr.setRequestHeader("Authorization", authorization)
 
       if (options?.signal) {
         options.signal.addEventListener("abort", () => xhr.abort())
@@ -232,7 +240,7 @@ export class DataClient {
   ): Promise<ResumableInitResponse> {
     let url = this.buildUrl(path) + "?upload=init"
     if (overwrite) url += "&overwrite=true"
-    const response = await fetch(url, {
+    const response = await engineFetch(this.engineGatewayUrl, url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ size }),
@@ -254,7 +262,7 @@ export class DataClient {
     const url =
       this.buildUrl(path) +
       `?upload_id=${encodeURIComponent(uploadId)}&offset=${offset}`
-    const response = await fetch(url, {
+    const response = await engineFetch(this.engineGatewayUrl, url, {
       method: "PUT",
       headers: { "Content-Type": "application/octet-stream" },
       body: chunk,
@@ -274,7 +282,7 @@ export class DataClient {
     const url =
       this.buildUrl(path) +
       `?upload_id=${encodeURIComponent(uploadId)}&upload=complete`
-    const response = await fetch(url, { method: "POST" })
+    const response = await engineFetch(this.engineGatewayUrl, url, { method: "POST" })
     if (!response.ok) {
       const err = await parseErrorResponse(response)
       throwApiError(err.detail, err.code)
@@ -288,7 +296,7 @@ export class DataClient {
   ): Promise<number> {
     const url =
       this.buildUrl(path) + `?upload_id=${encodeURIComponent(uploadId)}`
-    const response = await fetch(url, { method: "HEAD" })
+    const response = await engineFetch(this.engineGatewayUrl, url, { method: "HEAD" })
     if (!response.ok) return 0
     return Number(response.headers.get("X-Upload-Offset") ?? "0")
   }
